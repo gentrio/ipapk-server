@@ -154,7 +154,7 @@ function main() {
       res.set('Content-Type', 'application/json');
       var page = parseInt(req.params.page ? req.params.page : 1);
       if (req.params.platform === 'android' || req.params.platform === 'ios') {
-        queryDB("select * from info where platform=? group by bundleID order by uploadTime desc limit ?,?", [req.params.platform, (page - 1) * pageCount, page * pageCount], function(error, result) {
+        queryDB("select * from info where platform=? group by name order by uploadTime desc limit ?,?", [req.params.platform, (page - 1) * pageCount, page * pageCount], function(error, result) {
           if (result) {
             res.send(mapIconAndUrl(result))
           } else {
@@ -164,12 +164,12 @@ function main() {
       }
   });
 
-  app.get(['/apps/:platform/:bundleID', '/apps/:platform/:bundleID/:page'], function(req, res, next) {
+  app.get(['/apps/:platform/:name', '/apps/:platform/:name/:page'], function(req, res, next) {
   	  res.set('Access-Control-Allow-Origin','*');
       res.set('Content-Type', 'application/json');
       var page = parseInt(req.params.page ? req.params.page : 1);
       if (req.params.platform === 'android' || req.params.platform === 'ios') {
-        queryDB("select * from info where platform=? and bundleID=? order by uploadTime desc limit ?,? ", [req.params.platform, req.params.bundleID, (page - 1) * pageCount, page * pageCount], function(error, result) {
+        queryDB("select * from info where platform=? and name=? order by uploadTime desc limit ?,? ", [req.params.platform, req.params.name, (page - 1) * pageCount, page * pageCount], function(error, result) {
           if (result) {
             res.send(mapIconAndUrl(result))
           } else {
