@@ -2,6 +2,7 @@
 
 var fs = require('fs-extra');
 var https = require('https');
+var http = require('http');
 var path = require('path');
 var exit = process.exit;
 var pkg = require('./package.json');
@@ -43,6 +44,7 @@ program
     .parse(process.argv);
 
 var port = program.port || 1234;
+var httpPort = 1111
 
 var ipAddress = program.host || underscore
   .chain(require('os').networkInterfaces())
@@ -60,10 +62,12 @@ var globalCerFolder = serverDir + ipAddress;
 var ipasDir = serverDir + "ipa";
 var apksDir = serverDir + "apk";
 var iconsDir = serverDir + "icon";
+var fileDir = serverDir + "files";
 createFolderIfNeeded(serverDir)
 createFolderIfNeeded(ipasDir)
 createFolderIfNeeded(apksDir)
 createFolderIfNeeded(iconsDir)
+createFolderIfNeeded(fileDir)
 function createFolderIfNeeded (path) {
   if (!fs.existsSync(path)) {  
     fs.mkdirSync(path, function (err) {
@@ -103,8 +107,10 @@ excuteDB("CREATE TABLE IF NOT EXISTS info (\
  */
 process.exit = exit
 
+
 // CLI
 var basePath = "https://{0}:{1}".format(ipAddress, port);
+var baseHttpPath = "http://{0}:{1}".format(ipAddress, httpPort);
 if (!exit.exited) {
   main();
 }
@@ -153,7 +159,7 @@ function main() {
   	  res.set('Access-Control-Allow-Origin','*');
       res.set('Content-Type', 'application/json');
       var page = parseInt(req.params.page ? req.params.page : 1);
-      if (req.params.platform === 'android' || req.params.platform === 'ios') {
+      if (req.params.platform === 'ios' || req.params.platform === 'android') {
         queryDB("select * from info where platform=? group by name order by uploadTime desc limit ?,?", [req.params.platform, (page - 1) * pageCount, page * pageCount], function(error, result) {
           if (result) {
             res.send(mapIconAndUrl(result))
@@ -233,7 +239,39 @@ function main() {
     });
   });
 
+  app.post('/uploadFile', function(req, res) {
+		var form = new multiparty.Form();
+		form.parse(req, function(err, fields, files) {
+			if (err) {
+				errorHandler(err, res);
+				return;
+			}
+			
+			if (!fields.version) {
+				errorHandler("params error: no version", res)
+				return
+			}
+			if (!files.file) {
+				errorHandler("params error: no file", res)
+				return
+			}
+			var obj = files.file[0];
+			var tmp_path = obj.path;
+			var version = fields.version[0];
+
+			storeFile(tmp_path, version, filename => {
+				console.log(filename)
+				res.send({"code": 0, "data": filename})
+			}, error => {
+				if (error) {
+					errorHandler(error, res)
+				}
+			});
+		});
+	});
+
   https.createServer(options, app).listen(port);
+  http.createServer(app).listen(httpPort);
 }
 
 function errorHandler(error, res) {
@@ -247,7 +285,7 @@ function mapIconAndUrl(result) {
     if (item.platform === 'ios') {
       item.url = "itms-services://?action=download-manifest&url={0}/plist/{1}".format(basePath, item.guid);
     } else if (item.platform === 'android') {
-      item.url = "{0}/apk/{1}.apk".format(basePath, item.guid);
+      item.url = "{0}/apk/{1}.apk".format(baseHttpPath, item.guid);
     }
     return item;
   })
@@ -292,6 +330,19 @@ function storeApp(fileName, guid, callback) {
     new_path = path.join(apksDir, guid + ".apk");
   }
   fs.rename(fileName,new_path,callback)
+}
+
+function storeFile(fileName,version, callback, errorCallback) {
+	var guid = uuidV4()
+	var new_path = path.join(fileDir, guid + version + ".ipa")
+	fs.rename(fileName, new_path, error => {
+		if (error) {
+			errorCallback(error)
+		}else {
+			callback(new_path)
+		}
+	})
+	console.log(new_path)
 }
 
 function parseIpa(filename) {
