@@ -222,9 +222,14 @@ function main() {
         errorHandler("params error",res)
         return
       }
+      var taskname;
+      if (fields.taskname){
+        taskname = fields.taskname[0];
+      }
       var obj = files.package[0];
       var tmp_path = obj.path;
-      parseAppAndInsertToDb(tmp_path, changelog, info => {
+
+      parseAppAndInsertToDb(taskname, tmp_path, changelog, info => {
         storeApp(tmp_path, info["guid"], error => {
           if (error) {
             errorHandler(error,res)
@@ -292,34 +297,34 @@ function mapIconAndUrl(result) {
   return items;
 }
 
-function parseAppAndInsertToDb(filePath, changelog, callback, errorCallback) {
-  var guid = uuidV4();
-  var parse, extract
-  if (path.extname(filePath) === ".ipa") {
-    parse = parseIpa
-    extract = extractIpaIcon
-  } else if (path.extname(filePath) === ".apk") {
-    parse = parseApk
-    extract = extractApkIcon
-  } else {
-    errorCallback("params error")
-    return;
-  }
-  Promise.all([parse(filePath),extract(filePath,guid)]).then(values => {
-    var info = values[0]
-    info["guid"] = guid
-    info["changelog"] = changelog
-    excuteDB("INSERT INTO info (guid, platform, build, bundleID, version, name, changelog) VALUES (?, ?, ?, ?, ?, ?, ?);",
-    [info["guid"], info["platform"], info["build"], info["bundleID"], info["version"], info["name"], changelog],function(error){
-        if (!error){
-          callback(info)
-        } else {
-          errorCallback(error)
-        }
-    });
-  }, reason => {
-    errorCallback(reason)
-  })
+function parseAppAndInsertToDb(taskname, filePath, changelog, callback, errorCallback) {
+    var guid = uuidV4();
+    var parse, extract
+    if (path.extname(filePath) === ".ipa") {
+        parse = parseIpa
+        extract = extractIpaIcon
+    } else if (path.extname(filePath) === ".apk") {
+        parse = parseApk
+        extract = extractApkIcon
+    } else {
+        errorCallback("params error")
+        return;
+    }
+    Promise.all([parse(taskname, filePath), extract(filePath, guid)]).then(values => {
+        var info = values[0]
+        info["guid"] = guid
+        info["changelog"] = changelog
+        excuteDB("INSERT INTO info (guid, platform, build, bundleID, version, name, changelog) VALUES (?, ?, ?, ?, ?, ?, ?);",
+            [info["guid"], info["platform"], info["build"], info["bundleID"], info["version"], info["name"], changelog], function (error) {
+                if (!error) {
+                    callback(info)
+                } else {
+                    errorCallback(error)
+                }
+            });
+    }, reason => {
+        errorCallback(reason)
+    })
 }
 
 function storeApp(fileName, guid, callback) {
@@ -345,7 +350,7 @@ function storeFile(fileName,version, callback, errorCallback) {
 	console.log(new_path)
 }
 
-function parseIpa(filename) {
+function parseIpa(taskname, filename) {
   return new Promise(function(resolve,reject){
     var fd = fs.openSync(filename, 'r');
     extract(fd, function(err, info, raw){
@@ -362,12 +367,12 @@ function parseIpa(filename) {
   });
 }
 
-function parseApk(filename) {
+function parseApk(taskname, filename) {
   return new Promise(function(resolve,reject){
     apkParser3(filename, function (err, data) {
         var package = parseText(data.package)
         var info = {
-          "name":data["application-label"].replace(/'/g,""),
+          "name": typeof (taskname) == "undefined"? data["application-label"].replace(/'/g,""): data["application-label"].replace(/'/g,"") + '-' + taskname,
           "build":package.versionCode,
           "bundleID":package.name,
           "version":package.versionName,
