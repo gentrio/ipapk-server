@@ -2,6 +2,7 @@
 
 var fs = require('fs-extra');
 var https = require('https');
+var http = require('http');
 var path = require('path');
 var exit = process.exit;
 var pkg = require('./package.json');
@@ -43,6 +44,7 @@ program
     .parse(process.argv);
 
 var port = program.port || 1234;
+var httpPort = 1111
 
 var ipAddress = program.host || underscore
   .chain(require('os').networkInterfaces())
@@ -60,10 +62,12 @@ var globalCerFolder = serverDir + ipAddress;
 var ipasDir = serverDir + "ipa";
 var apksDir = serverDir + "apk";
 var iconsDir = serverDir + "icon";
+var fileDir = serverDir + "files";
 createFolderIfNeeded(serverDir)
 createFolderIfNeeded(ipasDir)
 createFolderIfNeeded(apksDir)
 createFolderIfNeeded(iconsDir)
+createFolderIfNeeded(fileDir)
 function createFolderIfNeeded (path) {
   if (!fs.existsSync(path)) {  
     fs.mkdirSync(path, function (err) {
@@ -103,8 +107,10 @@ excuteDB("CREATE TABLE IF NOT EXISTS info (\
  */
 process.exit = exit
 
+
 // CLI
 var basePath = "https://{0}:{1}".format(ipAddress, port);
+var baseHttpPath = "http://{0}:{1}".format(ipAddress, httpPort);
 if (!exit.exited) {
   main();
 }
@@ -153,8 +159,8 @@ function main() {
   	  res.set('Access-Control-Allow-Origin','*');
       res.set('Content-Type', 'application/json');
       var page = parseInt(req.params.page ? req.params.page : 1);
-      if (req.params.platform === 'android' || req.params.platform === 'ios') {
-        queryDB("select * from info where platform=? group by bundleID order by uploadTime desc limit ?,?", [req.params.platform, (page - 1) * pageCount, page * pageCount], function(error, result) {
+      if (req.params.platform === 'ios' || req.params.platform === 'android') {
+        queryDB("select * from info where platform=? group by name order by uploadTime desc limit ?,?", [req.params.platform, (page - 1) * pageCount, page * pageCount], function(error, result) {
           if (result) {
             res.send(mapIconAndUrl(result))
           } else {
@@ -164,12 +170,12 @@ function main() {
       }
   });
 
-  app.get(['/apps/:platform/:bundleID', '/apps/:platform/:bundleID/:page'], function(req, res, next) {
+  app.get(['/apps/:platform/:name', '/apps/:platform/:name/:page'], function(req, res, next) {
   	  res.set('Access-Control-Allow-Origin','*');
       res.set('Content-Type', 'application/json');
       var page = parseInt(req.params.page ? req.params.page : 1);
       if (req.params.platform === 'android' || req.params.platform === 'ios') {
-        queryDB("select * from info where platform=? and bundleID=? order by uploadTime desc limit ?,? ", [req.params.platform, req.params.bundleID, (page - 1) * pageCount, page * pageCount], function(error, result) {
+        queryDB("select * from info where platform=? and name=? order by uploadTime desc limit ?,? ", [req.params.platform, req.params.name, (page - 1) * pageCount, page * pageCount], function(error, result) {
           if (result) {
             res.send(mapIconAndUrl(result))
           } else {
@@ -216,9 +222,14 @@ function main() {
         errorHandler("params error",res)
         return
       }
+      var taskname;
+      if (fields.taskname){
+        taskname = fields.taskname[0];
+      }
       var obj = files.package[0];
       var tmp_path = obj.path;
-      parseAppAndInsertToDb(tmp_path, changelog, info => {
+
+      parseAppAndInsertToDb(taskname, tmp_path, changelog, info => {
         storeApp(tmp_path, info["guid"], error => {
           if (error) {
             errorHandler(error,res)
@@ -233,7 +244,39 @@ function main() {
     });
   });
 
+  app.post('/uploadFile', function(req, res) {
+		var form = new multiparty.Form();
+		form.parse(req, function(err, fields, files) {
+			if (err) {
+				errorHandler(err, res);
+				return;
+			}
+			
+			if (!fields.version) {
+				errorHandler("params error: no version", res)
+				return
+			}
+			if (!files.file) {
+				errorHandler("params error: no file", res)
+				return
+			}
+			var obj = files.file[0];
+			var tmp_path = obj.path;
+			var version = fields.version[0];
+
+			storeFile(tmp_path, version, filename => {
+				console.log(filename)
+				res.send({"code": 0, "data": filename})
+			}, error => {
+				if (error) {
+					errorHandler(error, res)
+				}
+			});
+		});
+	});
+
   https.createServer(options, app).listen(port);
+  http.createServer(app).listen(httpPort);
 }
 
 function errorHandler(error, res) {
@@ -247,41 +290,41 @@ function mapIconAndUrl(result) {
     if (item.platform === 'ios') {
       item.url = "itms-services://?action=download-manifest&url={0}/plist/{1}".format(basePath, item.guid);
     } else if (item.platform === 'android') {
-      item.url = "{0}/apk/{1}.apk".format(basePath, item.guid);
+      item.url = "{0}/apk/{1}.apk".format(baseHttpPath, item.guid);
     }
     return item;
   })
   return items;
 }
 
-function parseAppAndInsertToDb(filePath, changelog, callback, errorCallback) {
-  var guid = uuidV4();
-  var parse, extract
-  if (path.extname(filePath) === ".ipa") {
-    parse = parseIpa
-    extract = extractIpaIcon
-  } else if (path.extname(filePath) === ".apk") {
-    parse = parseApk
-    extract = extractApkIcon
-  } else {
-    errorCallback("params error")
-    return;
-  }
-  Promise.all([parse(filePath),extract(filePath,guid)]).then(values => {
-    var info = values[0]
-    info["guid"] = guid
-    info["changelog"] = changelog
-    excuteDB("INSERT INTO info (guid, platform, build, bundleID, version, name, changelog) VALUES (?, ?, ?, ?, ?, ?, ?);",
-    [info["guid"], info["platform"], info["build"], info["bundleID"], info["version"], info["name"], changelog],function(error){
-        if (!error){
-          callback(info)
-        } else {
-          errorCallback(error)
-        }
-    });
-  }, reason => {
-    errorCallback(reason)
-  })
+function parseAppAndInsertToDb(taskname, filePath, changelog, callback, errorCallback) {
+    var guid = uuidV4();
+    var parse, extract
+    if (path.extname(filePath) === ".ipa") {
+        parse = parseIpa
+        extract = extractIpaIcon
+    } else if (path.extname(filePath) === ".apk") {
+        parse = parseApk
+        extract = extractApkIcon
+    } else {
+        errorCallback("params error")
+        return;
+    }
+    Promise.all([parse(taskname, filePath), extract(filePath, guid)]).then(values => {
+        var info = values[0]
+        info["guid"] = guid
+        info["changelog"] = changelog
+        excuteDB("INSERT INTO info (guid, platform, build, bundleID, version, name, changelog) VALUES (?, ?, ?, ?, ?, ?, ?);",
+            [info["guid"], info["platform"], info["build"], info["bundleID"], info["version"], info["name"], changelog], function (error) {
+                if (!error) {
+                    callback(info)
+                } else {
+                    errorCallback(error)
+                }
+            });
+    }, reason => {
+        errorCallback(reason)
+    })
 }
 
 function storeApp(fileName, guid, callback) {
@@ -294,7 +337,20 @@ function storeApp(fileName, guid, callback) {
   fs.rename(fileName,new_path,callback)
 }
 
-function parseIpa(filename) {
+function storeFile(fileName,version, callback, errorCallback) {
+	var guid = uuidV4()
+	var new_path = path.join(fileDir, guid + version + ".ipa")
+	fs.rename(fileName, new_path, error => {
+		if (error) {
+			errorCallback(error)
+		}else {
+			callback(new_path)
+		}
+	})
+	console.log(new_path)
+}
+
+function parseIpa(taskname, filename) {
   return new Promise(function(resolve,reject){
     var fd = fs.openSync(filename, 'r');
     extract(fd, function(err, info, raw){
@@ -311,12 +367,12 @@ function parseIpa(filename) {
   });
 }
 
-function parseApk(filename) {
+function parseApk(taskname, filename) {
   return new Promise(function(resolve,reject){
     apkParser3(filename, function (err, data) {
         var package = parseText(data.package)
         var info = {
-          "name":data["application-label"].replace(/'/g,""),
+          "name": typeof (taskname) == "undefined"? data["application-label"].replace(/'/g,""): data["application-label"].replace(/'/g,"") + '-' + taskname,
           "build":package.versionCode,
           "bundleID":package.name,
           "version":package.versionName,

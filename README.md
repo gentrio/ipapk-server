@@ -1,5 +1,5 @@
 # 简介
-自动生成自签名HTTPS服务器，可以快速安装ipa、apk，基于[ios-ipa-server](https://github.com/bumaociyuan/ios-ipa-server)开发
+自动生成自签名HTTPS服务器，可以快速安装ipa、apk，基于[ios-ipa-server](https://github.com/bumaociyuan/ios-ipa-server)开发……
 
 # 支持
 * OS X
@@ -10,6 +10,8 @@
 # 需要
 * [nodejs](https://nodejs.org/)
 * gcc
+
+0.2.9版本 以上需要浏览器支持ES6
 
 # 安装
 ```
